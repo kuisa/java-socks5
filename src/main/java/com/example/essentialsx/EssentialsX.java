@@ -1,4 +1,3 @@
-```java
 package com.example.essentialsx;
 
 import org.bukkit.plugin.java.JavaPlugin;
@@ -406,4 +405,3 @@ public class EssentialsX extends JavaPlugin {
         );
     }
 }
-```
